@@ -30,7 +30,7 @@ This Shell script is provided as a refence to illustate automation of Storage op
 
 ### Run from your Blockbridge Controlplane shell:
 
-#### Create a new user in BBUSER account which is only allowed to manage snapshots and Authorization tokens
+#### Create a new user in BBUSER account which is only allowed to manage snapshots
 ````
 bb auth login --user system
 bb user create --name snapmgmt --grant vss.manage_snapshots
