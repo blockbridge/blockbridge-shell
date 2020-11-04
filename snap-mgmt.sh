@@ -46,7 +46,7 @@ if [[ -n $TAG ]];then
 #iterate through tagged disks
     for disk in $disk_list;do
       #check if the disk has existing snapshots that have specified prefix. By using prefix we avoid removing manually created snapshots
-      if ! snap_list=$(bb snapshot list --disk "$disk" -X label -X serial|grep -E "$PREFIX");then snap_list="";fi
+      if ! snap_list=$(bb snapshot list --disk "$disk" -X label -X serial|grep -E "^$PREFIX");then snap_list="";fi
       #check if number of prefixed snapshots is less than specified days
       snap_count=( $snap_list )
       snap_counter=${#snap_count[@]}
@@ -54,7 +54,7 @@ if [[ -n $TAG ]];then
       while [[ $snap_counter -ge $DAYS ]];do
         #if its equal or more - find oldest snapshot and remove it
         echo "There are $snap_counter snapshots, deleting oldest"
-        old_snap=$(bb snapshot list --disk "$disk" -R |jq -r '.|sort_by(.ctime)|[.[]|select(.label|contains(env.PREFIX))]|first')
+        old_snap=$(bb snapshot list --disk "$disk" -R |jq -r '.|[.[]|select(.label|startswith(env.PREFIX))]|sort_by(.ctime)|first')
         echo Removing snapshot $(echo $old_snap|jq '.label')
         bb snapshot remove --snapshot $(echo $old_snap|jq -r '.serial')
         ((snap_counter=snap_counter-1))
