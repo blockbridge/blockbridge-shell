@@ -1,10 +1,10 @@
 # Blockbridge Shell scripts
 
-This Shell script is provided as a refence to illustate automation of Storage operations
+These Shell scripts are provided as a refence to illustate automation of Storage operations directly with Blockbridge as well as with Proxmox VE.
 
-## Snapshot management:
+- ## Snapshot management: snap-mgmt.sh
 
-  1. Add snapshot to specified disk:
+  Add snapshot to tagged Blockbridge virtual disks:
       
       * "-h" IP or hostname of Blockbridge node
       
@@ -19,27 +19,35 @@ This Shell script is provided as a refence to illustate automation of Storage op
       * "-p" Snapshot name Prefix
       
 
-## Examples:
+   Example: `snap-mgmt.sh -h bbhost -d 3 -a token -t snapSchedule`
+  
+   #### Quick Start
 
- Example: `snap-mgmt.sh -h bbhost -d 3 -a token -t snapSchedule`
+   #### From your Blockbridge Controlplane shell create a new user in SYSTEM account which is only allowed to manage snapshots
+   ````
+   bb auth login --user system
+   bb user create --name snapmgmt --grant vss.manage_snapshots
+   ````
+
+   ##### Create a persistent authorization token that inherits user rights (note the generated token, it cannot be re-displayed):
+   ````
+   bb authorization create --user snapmgmt@system --scope 'v:o=all v:r=manage_snapshots'
+   ````
+
+- ## Proxmox Virtual Environment (PVE) Snapshot management: pve-snapshot_control.sh
+
+  Add snapshot to tagged PVE virtual machines:
+      
+      * -t <tag>        Tag used to identify VMs that need snapshots (required)
+      
+      * -p <prefix>     Prefix to append to snapshot label (default 'auto')
+            
+      * -c <count>      Number of snapshots to maintain (default 2, max 16)
+      
+      * -d              Prune snapshots as specified by (-c). Does not create new snapshots.
+
+  #### Examples:
+
+   Example: `pve-snapshot_control.sh -t autosnap -p autosnap -c 3`
  
- Example edit thes script to set all variables: `snap-mgmt.sh`
- 
- 
-## Quick Start
-
-### Run from your Blockbridge Controlplane shell:
-
-#### Create a new user in BBUSER account which is only allowed to manage snapshots
-````
-bb auth login --user system
-bb user create --name snapmgmt --grant vss.manage_snapshots
-````
-
-#### Create a persistent authorization token that inherits user rights (note the generated token, it cannot be re-displayed):
-````
-bb authorization create --user snapmgmt@system --scope 'v:o=all v:r=manage_snapshots'
-````
-
-## To avoid having to approve self-signed certificate, please follow this guide to install a properly signed SSL cert:
-https://kb.blockbridge.com/guide/custom-certs/
+   Take a snapshot of all PVE VMs that contain tag "autosnap". Keep at most 3 snapshots on each VM.
