@@ -3,10 +3,6 @@ set -euo pipefail
 #set -x
 
 #per-vm snapshots (without memory state) driven by tag.
-log() {
-  msg="$@"
-  echo -e "$msg"
-}
 
 # Function to display help
 show_help() {
@@ -72,7 +68,9 @@ echo "Prefix: $prefix"
 echo "Count: $count"
 
 get_tagged_vms(){
-  tagged_vms=$(pvesh get /cluster/resources --type vm --output-format json | jq --arg TAG "$tag" -r '.[] | select(.tags | type == "string" and ( . == $TAG or (. | split(";") | index($TAG) != null))) | "\(.vmid)=\(.node)"' | \
+  local tagged_vms
+  tagged_vms=$(pvesh get /cluster/resources --type vm --output-format json | \
+   jq --arg TAG "$tag" -r '.[] | select(.tags | type == "string" and ( . == $TAG or (. | split(";") | index($TAG) != null))) | "\(.vmid)=\(.node)"' | \
    paste -sd ' ')
   echo "${tagged_vms:-}"
 }
@@ -81,9 +79,9 @@ get_snapshot_count(){
   local vmid node snap_count 
   vmid="$1"
   node="$2"
-  snap_count=0
-  snap_count=$(pvesh get /nodes/"$node"/qemu/"$vmid"/snapshot --output-format json |jq --arg PREFIX "$prefix" '[.[] | select(.name | startswith($PREFIX))]|length')
-  echo "$snap_count"
+  snap_count=$(pvesh get /nodes/"$node"/qemu/"$vmid"/snapshot --output-format json | \
+   jq --arg PREFIX "$prefix" '[.[] | select(.name | startswith($PREFIX))]|length')
+  echo "${snap_count:=0}"
 }
 
 check_task_status(){
@@ -91,9 +89,9 @@ check_task_status(){
   if [[ "$1" != *"UPID"* ]]; then
     echo "No valid UPID found!"
     echo "$1"
-    return
+    return 1
   fi
-  upid=$(echo $1| sed 's/.*\(UPID:.*\)/\1/'|sed 's/"//g')
+  upid=$(echo "$1" |paste -sd ' ' | sed 's/.*\(UPID:.*\)/\1/' | sed 's/"//g')
   node=$(echo "$upid"|cut -d: -f2) 
 
   task_state=$(pvesh get /nodes/"$node"/tasks/"$upid"/status --output-format json )
@@ -107,11 +105,13 @@ check_task_status(){
   done || ( echo "Task status is : $exit_status"
             echo "FAILED TASK: $upid"
             echo "EXIT STATUS: $exit_status"
+            return 1
           )
   exit_status=$(echo "$task_state" | jq -r '.exitstatus' )
   if [[ "$exit_status" != "OK" ]]; then
     echo "FAILED TASK: $upid"
     echo "EXIT STATUS: $exit_status"
+    return 1
   else
     echo "TASK $upid"
     echo "STATUS: $exit_status"
@@ -125,12 +125,15 @@ delete_old_snapshots(){
   snaps_now=$(get_snapshot_count "$vmid" "$node")
   while [[ "$snaps_now" -gt "$count" ]];do
     echo "Current number of Snapshot Control snaps for VM $vmid is $snaps_now. Allowed number of snapshots is $count"
-    oldest_snap=$(pvesh get /nodes/"$node"/qemu/"$vmid"/snapshot --output-format json | jq --arg PREFIX "$prefix" -r '[.[]|select(.name | startswith($PREFIX))] | map(select(.snaptime != null)) | min_by(.snaptime)')
+    oldest_snap=$(pvesh get /nodes/"$node"/qemu/"$vmid"/snapshot --output-format json | \
+     jq --arg PREFIX "$prefix" -r '[.[]|select(.name | startswith($PREFIX))] | map(select(.snaptime != null)) | min_by(.snaptime)')
     oldest_snap_name=$(echo "$oldest_snap"|jq -r '.name')
     oldest_snap_time=$(echo "$oldest_snap"|jq -r '.snaptime')
     echo "Removing oldest snapshot $oldest_snap_name created on $(date -d @"$oldest_snap_time" '+%Y-%m-%d %H:%M:%S')"
     status=$(pvesh delete /nodes/"$node"/qemu/"$vmid"/snapshot/"$oldest_snap_name" )
-    check_task_status "$status"
+    if ! check_task_status "$status";then
+      echo "Snapshot delete for VM $vmid FAILED"
+    fi
     snaps_now=$(get_snapshot_count "$vmid" "$node")
     sleep 1
   done
@@ -144,8 +147,12 @@ create_new_snapshot(){
   suffix=$(date '+%Y-%m-%d-%H-%M')
   echo "Create new snapshot for VM $vmid with name ${prefix}_${suffix}"
   status=$(pvesh create /nodes/"$node"/qemu/"$vmid"/snapshot -snapname "$prefix"_"$suffix" -vmstate 0 -description "Created by Snapshot Control on $suffix" )
-  check_task_status "$status"
   echo "VM $vmid has $(get_snapshot_count "$vmid" "$node") snapshots"
+  if ! check_task_status "$status";then
+    return 1
+  else
+    return 0
+  fi
 }
 
 tagged_vms=$(get_tagged_vms)
@@ -169,7 +176,18 @@ for vm in $tagged_vms; do
     delete_old_snapshots "$vmid" "$node"
   else
     echo "----"
-    create_new_snapshot "$vmid" "$node"
-    delete_old_snapshots "$vmid" "$node"
+    if ! create_new_snapshot "$vmid" "$node";then
+      failed_vms="${failed_vms:-} $vmid"
+    else
+      delete_old_snapshots "$vmid" "$node"
+    fi
   fi
 done
+
+if [[ -n ${failed_vms:-} ]];then
+  echo "Following VM snapshots failed: $failed_vms"
+  echo "Examine PVE task log"
+  exit 1
+else
+  exit 0
+fi
